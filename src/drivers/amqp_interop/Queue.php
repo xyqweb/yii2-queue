@@ -414,7 +414,7 @@ class Queue extends CliQueue
 
         $queue = $this->context->createQueue($this->queueName);
         $queue->addFlag(AmqpQueue::FLAG_DURABLE);
-        $queue->setArguments(['x-max-priority' => $this->maxPriority]);
+        $queue->setArguments(['x-max-priority' => $this->maxPriority, 'x-queue-mode' => 'lazy']);
         $this->context->declareQueue($queue);
 
         $topic = $this->context->createTopic($this->exchangeName);
