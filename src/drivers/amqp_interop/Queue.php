@@ -267,18 +267,10 @@ class Queue extends CliQueue
         $consumer = $this->context->createConsumer($queue);
         $consumerFun = $this->context->createSubscriptionConsumer();
         $consumerFun->subscribe($consumer, function (AmqpMessage $message, AmqpConsumer $consumer) {
-            if ($message->isRedelivered()) {
-                $consumer->acknowledge($message);
-
-                $this->redeliver($message);
-
-                return true;
-            }
-
             $ttr = $message->getProperty(self::TTR);
             $attempt = $message->getProperty(self::ATTEMPT, 1);
             $reconsumeTime = $this->reconsumeTime;
-
+            file_put_contents(\Yii::$app->getRuntimePath() . '/queue_consumer_' . date('Ymd') . '.log', date('Y-m-d H:i:s') . ' messageId:' . $message->getMessageId() . ' palybody:' . $message->getBody() . "\n", FILE_APPEND);
             if ($this->handleMessage($message->getMessageId(), $message->getBody(), $ttr, $attempt, $reconsumeTime)) {
                 $consumer->acknowledge($message);
             } else {
@@ -335,7 +327,9 @@ class Queue extends CliQueue
 
         $producer->send($topic, $message);
 
-        return $message->getMessageId();
+        $messageId = $message->getMessageId();
+        file_put_contents(\Yii::$app->getRuntimePath() . '/queue_push_' . date('Ymd') . '.log', date('Y-m-d H:i:s') . ' messageId:' . $messageId . ' queueName:' . $this->queueName . ' payload:' . $payload . "\n", FILE_APPEND);
+        return $messageId;
     }
 
     /**
