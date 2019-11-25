@@ -224,6 +224,18 @@ class Queue extends CliQueue
     public $routingKey = NULL;
 
     /**
+     * 队列类型
+     * @var array
+     */
+    public $queueArguments = NULL;
+
+    /**
+     * 日志路径
+     * @var string
+     */
+    public $logPath = NULL;
+
+    /**
      * Amqp interop context.
      *
      * @var AmqpContext
@@ -270,7 +282,9 @@ class Queue extends CliQueue
             $ttr = $message->getProperty(self::TTR);
             $attempt = $message->getProperty(self::ATTEMPT, 1);
             $reconsumeTime = $this->reconsumeTime;
-            file_put_contents(\Yii::$app->getRuntimePath() . '/queue_consumer_' . date('Ymd') . '.log', date('Y-m-d H:i:s') . ' messageId:' . $message->getMessageId() . ' palybody:' . $message->getBody() . "\n", FILE_APPEND);
+            if (is_dir($this->logPath)) {
+                file_put_contents($this->logPath . '/queue_consumer_' . date('Ymd') . '.log', date('Y-m-d H:i:s') . ' messageId:' . $message->getMessageId() . ' palybody:' . $message->getBody() . "\n", FILE_APPEND);
+            }
             if ($this->handleMessage($message->getMessageId(), $message->getBody(), $ttr, $attempt, $reconsumeTime)) {
                 $consumer->acknowledge($message);
             } else {
@@ -328,7 +342,9 @@ class Queue extends CliQueue
         $producer->send($topic, $message);
 
         $messageId = $message->getMessageId();
-        file_put_contents(\Yii::$app->getRuntimePath() . '/queue_push_' . date('Ymd') . '.log', date('Y-m-d H:i:s') . ' messageId:' . $messageId . ' queueName:' . $this->queueName . ' payload:' . $payload . "\n", FILE_APPEND);
+        if (is_dir($this->logPath)) {
+            file_put_contents($this->logPath . '/queue_push_' . date('Ymd') . '.log', date('Y-m-d H:i:s') . ' messageId:' . $messageId . ' queueName:' . $this->queueName . ' payload:' . $payload . "\n", FILE_APPEND);
+        }
         return $messageId;
     }
 
@@ -408,7 +424,11 @@ class Queue extends CliQueue
 
         $queue = $this->context->createQueue($this->queueName);
         $queue->addFlag(AmqpQueue::FLAG_DURABLE);
-        $queue->setArguments(['x-max-priority' => $this->maxPriority, 'x-queue-mode' => 'lazy']);
+        $queueArguments = ['x-max-priority' => $this->maxPriority];
+        if (is_array($this->queueArguments) && !empty($this->queueArguments)) {
+            $queueArguments = array_merge($queueArguments, $this->queueArguments);
+        }
+        $queue->setArguments($queueArguments);
         $this->context->declareQueue($queue);
 
         $topic = $this->context->createTopic($this->exchangeName);
