@@ -161,6 +161,7 @@ abstract class Command extends Controller
      */
     protected function handleMessage($id, $message, $ttr, $attempt, $reconsumeTime=60)
     {
+        $ttr = floatval(is_float($ttr) ? $ttr : 300);
         // Executes child process
         $cmd = strtr('php yii queue/exec "id" "ttr" "attempt" "pid" "reconsumeTime"', [
             'php' => $this->phpBinary,
