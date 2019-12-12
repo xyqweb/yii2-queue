@@ -227,6 +227,9 @@ abstract class Queue extends Component
         }
         $return = $result = true;
         try {
+            if (method_exists($event->job, 'setMessageId')) {
+                $event->job->setMessageId($id);
+            }
             $res = $event->job->execute($this);
             ($res === false) ? $result = false : true;
         } catch (\Exception $error) {
