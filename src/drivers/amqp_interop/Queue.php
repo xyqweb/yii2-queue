@@ -192,31 +192,31 @@ class Queue extends CliQueue
      * @var string command class name
      */
     public $commandClass = Command::class;
-    
+
     /**
      * 消费失败后，间隔60秒后才可再次被消费
      * @var integer
      */
     public $reconsumeTime = 60;
-    
+
     /**
      * 最多失败次数
      * @var integer
      */
     public $maxFailNum = 3;
-    
+
     /**
      * 错误mq队列
      * @var string
      */
     public $errorQueueName = NULL;
-    
+
     /**
      * 错误mq 路由
      * @var string
      */
     public $errorRoutingKey = NULL;
-    
+
     /**
      * 路由key
      * @var string
@@ -254,7 +254,13 @@ class Queue extends CliQueue
      * @var bool
      */
     protected $setupBrokerDone = false;
-    
+    /**
+     * queue message id
+     *
+     * @var string
+     */
+    public $messageId = '';
+
     /**
      * @inheritdoc
      */
@@ -282,17 +288,18 @@ class Queue extends CliQueue
             $ttr = $message->getProperty(self::TTR);
             $attempt = $message->getProperty(self::ATTEMPT, 1);
             $reconsumeTime = $this->reconsumeTime;
+            $messageId = $message->getMessageId();
             if (is_dir($this->logPath)) {
-                file_put_contents($this->logPath . '/queue_consumer_' . date('Ymd') . '.log', date('Y-m-d H:i:s') . ' messageId:' . $message->getMessageId() . ' palybody:' . $message->getBody() . "\n", FILE_APPEND);
+                file_put_contents($this->logPath . '/queue_consumer_' . date('Ymd') . '.log', date('Y-m-d H:i:s') . ' messageId:' . $messageId . ' palybody:' . $message->getBody() . "\n", FILE_APPEND);
             }
-            if ($this->handleMessage($message->getMessageId(), $message->getBody(), $ttr, $attempt, $reconsumeTime)) {
+            if ($this->handleMessage($messageId, $message->getBody(), $ttr, $attempt, $reconsumeTime)) {
                 $consumer->acknowledge($message);
             } else {
                 $consumer->acknowledge($message);
 
                 $this->redeliver($message);
             }
-
+            $this->messageId = $messageId;
             return true;
         });
 
@@ -345,6 +352,7 @@ class Queue extends CliQueue
         if (is_dir($this->logPath)) {
             file_put_contents($this->logPath . '/queue_push_' . date('Ymd') . '.log', date('Y-m-d H:i:s') . ' messageId:' . $messageId . ' queueName:' . $this->queueName . ' payload:' . $payload . "\n", FILE_APPEND);
         }
+        $this->messageId = $messageId;
         return $messageId;
     }
 
@@ -380,26 +388,26 @@ class Queue extends CliQueue
         }
 
         $config = [
-            'dsn' => $this->dsn,
-            'host' => $this->host,
-            'port' => $this->port,
-            'user' => $this->user,
-            'pass' => $this->password,
-            'vhost' => $this->vhost,
-            'read_timeout' => $this->readTimeout,
-            'write_timeout' => $this->writeTimeout,
+            'dsn'                => $this->dsn,
+            'host'               => $this->host,
+            'port'               => $this->port,
+            'user'               => $this->user,
+            'pass'               => $this->password,
+            'vhost'              => $this->vhost,
+            'read_timeout'       => $this->readTimeout,
+            'write_timeout'      => $this->writeTimeout,
             'connection_timeout' => $this->connectionTimeout,
-            'heartbeat' => $this->heartbeat,
-            'persisted' => $this->persisted,
-            'lazy' => $this->lazy,
-            'qos_global' => $this->qosGlobal,
-            'qos_prefetch_size' => $this->qosPrefetchSize,
+            'heartbeat'          => $this->heartbeat,
+            'persisted'          => $this->persisted,
+            'lazy'               => $this->lazy,
+            'qos_global'         => $this->qosGlobal,
+            'qos_prefetch_size'  => $this->qosPrefetchSize,
             'qos_prefetch_count' => $this->qosPrefetchCount,
-            'ssl_on' => $this->sslOn,
-            'ssl_verify' => $this->sslVerify,
-            'ssl_cacert' => $this->sslCacert,
-            'ssl_cert' => $this->sslCert,
-            'ssl_key' => $this->sslKey,
+            'ssl_on'             => $this->sslOn,
+            'ssl_verify'         => $this->sslVerify,
+            'ssl_cacert'         => $this->sslCacert,
+            'ssl_cert'           => $this->sslCert,
+            'ssl_key'            => $this->sslKey,
         ];
 
         $config = array_filter($config, function ($value) {
@@ -467,15 +475,15 @@ class Queue extends CliQueue
         $newMessage->setProperty(self::ATTEMPT, ++$attempt);
 
         $this->context->createProducer()->send(
-             $this->context->createQueue($this->queueName),
-             $newMessage
-         );
+            $this->context->createQueue($this->queueName),
+            $newMessage
+        );
     }
-    
+
     protected function initParams()
     {
-        $this->routingKey = $this->routingKey ?? $this->queueName.'Key';
-        $this->errorQueueName = $this->errorQueueName ?? $this->queueName.'Error';
-        $this->errorRoutingKey = $this->errorRoutingKey ?? $this->queueName.'ErrorKey';
+        $this->routingKey = $this->routingKey ?? $this->queueName . 'Key';
+        $this->errorQueueName = $this->errorQueueName ?? $this->queueName . 'Error';
+        $this->errorRoutingKey = $this->errorRoutingKey ?? $this->queueName . 'ErrorKey';
     }
 }
