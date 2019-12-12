@@ -225,6 +225,7 @@ abstract class Queue extends Component
         if ($event->handled) {
             return true;
         }
+        $error = '';
         $return = $result = true;
         try {
             if (method_exists($event->job, 'setMessageId')) {
@@ -243,6 +244,9 @@ abstract class Queue extends Component
         $this->trigger(self::EVENT_AFTER_EXEC, $event);
         if ($result === false && strpos(get_called_class(), 'amqp_interop')) {
             $this->handleFailMessage($message, $ttr, $reconsumeTime, null);
+        }
+        if (false == $result) {
+            Console::output(get_class($job) . " execute " . 'fail， body：' . $message . "\n" . $error);
         }
         return $return;
     }
