@@ -254,12 +254,6 @@ class Queue extends CliQueue
      * @var bool
      */
     protected $setupBrokerDone = false;
-    /**
-     * queue message id
-     *
-     * @var string
-     */
-    public $messageId = '';
 
     /**
      * @inheritdoc
@@ -299,7 +293,6 @@ class Queue extends CliQueue
 
                 $this->redeliver($message);
             }
-            $this->messageId = $messageId;
             return true;
         });
 
@@ -352,7 +345,6 @@ class Queue extends CliQueue
         if (is_dir($this->logPath)) {
             file_put_contents($this->logPath . '/queue_push_' . date('Ymd') . '.log', date('Y-m-d H:i:s') . ' messageId:' . $messageId . ' queueName:' . $this->queueName . ' payload:' . $payload . "\n", FILE_APPEND);
         }
-        $this->messageId = $messageId;
         return $messageId;
     }
 
