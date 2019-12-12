@@ -222,12 +222,10 @@ abstract class Queue extends Component
             'attempt' => $attempt,
         ]);
         $this->trigger(self::EVENT_BEFORE_EXEC, $event);
-        Console::output("messageId {$id} Begin execute " . get_class($job));
         if ($event->handled) {
             return true;
         }
         $return = $result = true;
-        $error = '';
         try {
             $res = $event->job->execute($this);
             ($res === false) ? $result = false : true;
@@ -243,7 +241,6 @@ abstract class Queue extends Component
         if ($result === false && strpos(get_called_class(), 'amqp_interop')) {
             $this->handleFailMessage($message, $ttr, $reconsumeTime, null);
         }
-        Console::output("messageId {$id} execute result" . ($result ? 'success ' : 'fail ') . $error);
         return $return;
     }
 
