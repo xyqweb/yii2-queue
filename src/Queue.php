@@ -318,7 +318,6 @@ abstract class Queue extends Component
     public function handleFailMessage($message, $ttr, $delay, $priority)
     {
         $this->initParams();
-        echo $message;
         $key = md5($message);
         $num = 0;
         
