@@ -236,6 +236,17 @@ class Queue extends CliQueue
     public $logPath = NULL;
 
     /**
+     * 日志对象
+     * @var xyqWeb\log\YiiLog
+     */
+    private $logDriver = null;
+
+    /**
+     * @var null 日志名称
+     */
+    public $log = NULL;
+
+    /**
      * Amqp interop context.
      *
      * @var AmqpContext
@@ -264,6 +275,9 @@ class Queue extends CliQueue
         Event::on(BaseApp::class, BaseApp::EVENT_AFTER_REQUEST, function () {
             $this->close();
         });
+        if (is_string($this->log)) {
+            $this->logDriver = \Yii::$app->get($this->log, false);
+        }
     }
 
     /**
@@ -285,6 +299,9 @@ class Queue extends CliQueue
             $messageId = $message->getMessageId();
             if (is_dir($this->logPath)) {
                 file_put_contents($this->logPath . '/queue_consumer_' . date('Ymd') . '.log', date('Y-m-d H:i:s') . ' messageId:' . $messageId . ' palybody:' . $message->getBody() . "\n", FILE_APPEND);
+            }
+            if (is_object($this->logDriver) && method_exists($this->logDriver, 'write')) {
+                $this->logDriver->write('queue/queue_consumer', ' messageId:' . $message->getMessageId() . ' palybody:' . $message->getBody());
             }
             if ($this->handleMessage($messageId, $message->getBody(), $ttr, $attempt, $reconsumeTime)) {
                 $consumer->acknowledge($message);
@@ -344,6 +361,9 @@ class Queue extends CliQueue
         $messageId = $message->getMessageId();
         if (is_dir($this->logPath)) {
             file_put_contents($this->logPath . '/queue_push_' . date('Ymd') . '.log', date('Y-m-d H:i:s') . ' messageId:' . $messageId . ' queueName:' . $this->queueName . ' payload:' . $payload . "\n", FILE_APPEND);
+        }
+        if (is_object($this->logDriver) && method_exists($this->logDriver, 'write')) {
+            $this->logDriver->write('queue/queue_push', ' messageId:' . $messageId . ' queueName:' . $this->queueName . ' payload:' . $payload);
         }
         return $messageId;
     }
