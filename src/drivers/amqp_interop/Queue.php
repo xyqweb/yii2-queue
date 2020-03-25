@@ -301,7 +301,7 @@ class Queue extends CliQueue
                 file_put_contents($this->logPath . '/queue_consumer_' . date('Ymd') . '.log', date('Y-m-d H:i:s') . ' messageId:' . $messageId . ' palybody:' . $message->getBody() . "\n", FILE_APPEND);
             }
             if (is_object($this->logDriver) && method_exists($this->logDriver, 'write')) {
-                $this->logDriver->write('queue/queue_consumer', ' messageId:' . $message->getMessageId() . ' palybody:' . $message->getBody());
+                $this->logDriver->write('queue/queue_consumer.log', ' messageId:' . $message->getMessageId() . ' palybody:' . $message->getBody());
             }
             if ($this->handleMessage($messageId, $message->getBody(), $ttr, $attempt, $reconsumeTime)) {
                 $consumer->acknowledge($message);
@@ -363,7 +363,7 @@ class Queue extends CliQueue
             file_put_contents($this->logPath . '/queue_push_' . date('Ymd') . '.log', date('Y-m-d H:i:s') . ' messageId:' . $messageId . ' queueName:' . $this->queueName . ' payload:' . $payload . "\n", FILE_APPEND);
         }
         if (is_object($this->logDriver) && method_exists($this->logDriver, 'write')) {
-            $this->logDriver->write('queue/queue_push', ' messageId:' . $messageId . ' queueName:' . $this->queueName . ' payload:' . $payload);
+            $this->logDriver->write('queue/queue_push.log', ' messageId:' . $messageId . ' queueName:' . $this->queueName . ' payload:' . $payload);
         }
         return $messageId;
     }
