@@ -255,7 +255,7 @@ class Queue extends CliQueue
     {
         parent::init();
         Event::on(BaseApp::class, BaseApp::EVENT_AFTER_REQUEST, function () {
-            $this->close();
+            $this->close('all');
         });
     }
 
