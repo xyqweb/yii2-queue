@@ -7,16 +7,18 @@
 
 namespace yii\queue;
 
+use Yii;
+use yii\base\Application as BaseApp;
 use yii\base\Component;
-use yii\base\InvalidArgumentException;
+use yii\base\Event;
+use yii\base\InvalidParamException;
 use yii\di\Instance;
-use yii\helpers\Console;
 use yii\helpers\VarDumper;
 use yii\queue\serializers\PhpSerializer;
 use yii\queue\serializers\SerializerInterface;
 
 /**
- * Base Queue.
+ * Base Queue
  *
  * @property null|int $workerPid
  * @since 2.0.2
@@ -45,6 +47,10 @@ abstract class Queue extends Component
      * @event ExecEvent
      */
     const EVENT_AFTER_ERROR = 'afterError';
+    /**
+     * @event ChangeQueueNameEvent
+     */
+    const EVENT_CHANGE_QUEUE_NAME = 'changeQueueName';
     /**
      * @see Queue::isWaiting()
      */
@@ -76,11 +82,60 @@ abstract class Queue extends Component
      * @var int default attempt count
      */
     public $attempts = 1;
+    /**
+     * @var string new queue name
+     */
+    public $newQueueName = '';
+    /**
+     * @var int Length of retry interval
+     */
+    public $reconsumeTime = 60;
 
-    public $queueName = 'queue';
+    /**
+     * log driver object
+     * @var object|null
+     */
+    protected $logDriver = null;
 
+    /**
+     * This property should be an integer indicating the maximum fail exec the queue should support. Default is 3
+     *
+     * @var int
+     */
+    public $maxFailNumber = 3;
+    /**
+     * @var null|string log driver name
+     */
+    public $log = NULL;
+    /**
+     * This property should be an string indicating the dependency complete event the queue should support，only support db transaction. Default is empty
+     *
+     * @var string
+     */
+    public $pushDependency = '';
+    /**
+     * This property should be an array. Default is empty
+     *
+     * @var array
+     */
+    protected $delayPushData = [];
+    /**
+     * This property should be an bool indicating the push dependency active the queue should support. Default is false
+     *
+     * @var bool
+     */
+    private $isActiveDependency = false;
+    /**
+     * @var int queue ttr
+     */
     private $pushTtr;
+    /**
+     * @var int queue delay
+     */
     private $pushDelay;
+    /**
+     * @var int queue priority
+     */
     private $pushPriority;
 
 
@@ -91,6 +146,18 @@ abstract class Queue extends Component
     {
         parent::init();
         $this->serializer = Instance::ensure($this->serializer, SerializerInterface::class);
+        if (is_string($this->log) && \Yii::$app->has($this->log)) {
+            $logDriver = \Yii::$app->get($this->log);
+            if (method_exists($logDriver, 'write')) {
+                $this->logDriver = $logDriver;
+                if (is_object($this->logDriver) && method_exists($this->logDriver, 'close')) {
+                    Event::on(BaseApp::class, BaseApp::EVENT_AFTER_REQUEST, function () {
+                        $this->logDriver->close();
+                    });
+                }
+            }
+            unset($logDriver);
+        }
     }
 
     /**
@@ -130,36 +197,34 @@ abstract class Queue extends Component
     }
 
     /**
-     * Sets queue name.
+     * 设置新的队列名称
      *
-     * @param string $value
+     * @author xyq
+     * @param string $queueName
      * @return $this
      */
-    public function queueName($value)
+    public function queueName(string $queueName)
     {
-        $this->queueName = $value;
-        $this->resetQueueParams();
+        if (!empty($queueName)) {
+            $this->newQueueName = $queueName;
+        }
         return $this;
     }
 
     /**
-     * Pushes job into queue.
+     * Pushes job into queue
      *
      * @param JobInterface|mixed $job
      * @return string|null id of a job message
      */
     public function push($job)
     {
-        $this->initParams();
-        
         $event = new PushEvent([
-            'job' => $job,
-            'ttr' => $this->pushTtr ?: (
-            $job instanceof RetryableJobInterface
+            'job'      => $job,
+            'ttr'      => $job instanceof RetryableJobInterface
                 ? $job->getTtr()
-                : $this->ttr
-            ),
-            'delay' => $this->pushDelay ?: 0,
+                : ($this->pushTtr ?: $this->ttr),
+            'delay'    => $this->pushDelay ?: 0,
             'priority' => $this->pushPriority,
         ]);
         $this->pushTtr = null;
@@ -172,13 +237,53 @@ abstract class Queue extends Component
         }
 
         if ($this->strictJobType && !($event->job instanceof JobInterface)) {
-            throw new InvalidArgumentException('Job must be instance of JobInterface.');
+            throw new InvalidParamException('Job must be instance of JobInterface.');
         }
 
         $message = $this->serializer->serialize($event->job);
+        if (!empty($this->pushDependency) && 'db' == $this->pushDependency) {
+            if (Yii::$app->db->getTransaction()) {
+                $this->delayPushData[] = [
+                    'event'     => $event,
+                    'queueName' => $this->newQueueName,
+                    'message'   => $message
+                ];
+                if (!$this->isActiveDependency) {
+                    $this->isActiveDependency = true;
+                    Event::on(\yii\db\Connection::class, \yii\db\Connection::EVENT_COMMIT_TRANSACTION, function () {
+                        foreach ($this->delayPushData as $item) {
+                            $this->queueName($item['queueName']);
+                            $this->executePushEvent($item['event'],$item['message']);
+                        }
+                        $this->delayPushData = [];
+                        $this->isActiveDependency = false;
+                    });
+                    Event::on(\yii\db\Connection::class, \yii\db\Connection::EVENT_ROLLBACK_TRANSACTION, function () {
+                        $this->delayPushData = [];
+                        $this->isActiveDependency = false;
+                    });
+                }
+            } else {
+                return $this->executePushEvent($event,$message);
+            }
+            return 'waiting for database transaction commit';
+        } else {
+            return $this->executePushEvent($event,$message);
+        }
+    }
+
+    /**
+     * execute Push Event
+     *
+     * @author xyq
+     * @param $event
+     * @param $message
+     * @return string
+     */
+    private function executePushEvent($event,$message)
+    {
         $event->id = $this->pushMessage($message, $event->ttr, $event->delay, $event->priority);
         $this->trigger(self::EVENT_AFTER_PUSH, $event);
-
         return $event->id;
     }
 
@@ -194,6 +299,7 @@ abstract class Queue extends Component
     /**
      * Uses for CLI drivers and gets process ID of a worker.
      *
+     * @return null
      * @since 2.0.2
      */
     public function getWorkerPid()
@@ -208,47 +314,38 @@ abstract class Queue extends Component
      * @param int $attempt number
      * @return bool
      */
-    protected function handleMessage($id, $message, $ttr, $attempt, $reconsumeTime=60)
+    protected function handleMessage($id, $message, $ttr, $attempt)
     {
         $job = $this->serializer->unserialize($message);
         if (!($job instanceof JobInterface)) {
             $dump = VarDumper::dumpAsString($job);
-            throw new InvalidArgumentException("Job $id must be a JobInterface instance instead of $dump.");
+            throw new InvalidParamException("Job $id must be a JobInterface instance instead of $dump.");
         }
+
         $event = new ExecEvent([
-            'id' => $id,
-            'job' => $job,
-            'ttr' => $ttr,
+            'id'      => $id,
+            'job'     => $job,
+            'ttr'     => $ttr,
             'attempt' => $attempt,
         ]);
         $this->trigger(self::EVENT_BEFORE_EXEC, $event);
         if ($event->handled) {
             return true;
         }
-        $error = '';
-        $return = $result = true;
         try {
             if (method_exists($event->job, 'setMessageId')) {
                 $event->job->setMessageId($id);
             }
-            $res = $event->job->execute($this);
-            ($res === false) ? $result = false : true;
+            $event->job->execute($this);
         } catch (\Exception $error) {
-            $return = $this->handleError($event->id, $event->job, $event->ttr, $event->attempt, $error);
-            $result = false;
+            return $this->handleError($event->id, $event->job, $event->ttr, $event->attempt, $error);
+        } catch (\TypeError $error) {
+            return $this->handleError($event->id, $event->job, $event->ttr, $event->attempt, $error);
         } catch (\Throwable $error) {
-            $return = $this->handleError($event->id, $event->job, $event->ttr, $event->attempt, $error);
-            $result = false;
+            return $this->handleError($event->id, $event->job, $event->ttr, $event->attempt, $error);
         }
-        
         $this->trigger(self::EVENT_AFTER_EXEC, $event);
-        if ($result === false && strpos(get_called_class(), 'amqp_interop')) {
-            $this->handleFailMessage($message, $ttr, $reconsumeTime, null);
-        }
-        if (false == $result) {
-            Console::output(get_class($job) . " execute " . 'fail， body：' . $message . "\n" . $error);
-        }
-        return $return;
+        return true;
     }
 
     /**
@@ -262,18 +359,35 @@ abstract class Queue extends Component
      */
     public function handleError($id, $job, $ttr, $attempt, $error)
     {
-        $event = new ErrorEvent([
-            'id' => $id,
-            'job' => $job,
-            'ttr' => $ttr,
-            'attempt' => $attempt,
-            'error' => $error,
-            'retry' => $job instanceof RetryableJobInterface
+        $errorData = [
+            'id'          => $id,
+            'job'         => $job,
+            'ttr'         => $ttr,
+            'attempt'     => $attempt,
+            'error_msg'   => $error->getMessage(),
+            'error_file'  => $error->getFile(),
+            'error_line'  => $error->getLine(),
+            'error_trace' => $error->getTraceAsString(),
+            'retry'       => $job instanceof RetryableJobInterface
                 ? $job->canRetry($attempt, $error)
                 : $attempt < $this->attempts,
-        ]);
-        $this->trigger(self::EVENT_AFTER_ERROR, $event);
-        return !$event->retry;
+        ];
+        $this->writeLog('queue/execute_error.log', $errorData);
+        return $errorData['retry'];
+    }
+
+    /**
+     * 写入日志
+     *
+     * @author xyq
+     * @param string $fileName
+     * @param $content
+     */
+    protected function writeLog(string $fileName, $content)
+    {
+        if (method_exists($this->logDriver, 'write')) {
+            $this->logDriver->write($fileName, $content);
+        }
     }
 
     /**
@@ -308,51 +422,4 @@ abstract class Queue extends Component
      * @return int status code
      */
     abstract public function status($id);
-
-    /**
-     *
-     * 针对rabbitMQ的错误处理
-     * @author xyq
-     * @param $message
-     * @param $ttr
-     * @param $delay
-     * @param $priority
-     * @return bool
-     */
-    public function handleFailMessage($message, $ttr, $delay, $priority)
-    {
-        $this->initParams();
-        $key = md5($message);
-        $num = 0;
-        
-        //redis缓存错误次数
-        try {
-            $cache = \Yii::$app->redis;
-            $num = $cache->incr($key);
-        }catch (\Exception $e){
-            Console::output('redis connect fail!');
-        }
-        
-        if($num >= $this->maxFailNum){
-            $queueName       = $this->queueName;
-            $routingKey      = $this->routingKey;
-            $this->queueName = $this->errorQueueName;
-            $this->routingKey=$this->errorRoutingKey;
-            $this->pushMessage($message, $ttr, 0, $priority);
-            $this->queueName = $queueName;
-            $this->routingKey=$routingKey;
-            return true;
-        }
-        $this->pushMessage($message, $ttr, $delay, $priority);
-        $cache->expire($key, 3600);
-    }
-    
-    public function resetQueueParams()
-    {
-        $this->routingKey = null;
-        $this->errorQueueName = null;
-        $this->errorRoutingKey = null;
-    }
-    
-    abstract protected function initParams();
 }
