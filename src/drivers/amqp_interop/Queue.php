@@ -187,6 +187,12 @@ class Queue extends CliQueue
      */
     public $maxPriority = 10;
     /**
+     * 队列类型
+     * @var array
+     */
+    public $queueArguments = NULL;
+
+    /**
      * The property contains a command class which used in cli.
      *
      * @var string command class name
@@ -194,64 +200,32 @@ class Queue extends CliQueue
     public $commandClass = Command::class;
 
     /**
-     * 消费失败后，间隔60秒后才可再次被消费
-     * @var integer
-     */
-    public $reconsumeTime = 60;
-
-    /**
-     * 最多失败次数
-     * @var integer
-     */
-    public $maxFailNum = 3;
-
-    /**
-     * 错误mq队列
-     * @var string
-     */
-    public $errorQueueName = NULL;
-
-    /**
-     * 错误mq 路由
-     * @var string
-     */
-    public $errorRoutingKey = NULL;
-
-    /**
-     * 路由key
-     * @var string
-     */
-    public $routingKey = NULL;
-
-    /**
-     * 队列类型
-     * @var array
-     */
-    public $queueArguments = NULL;
-
-    /**
-     * 日志路径
-     * @var string
-     */
-    public $logPath = NULL;
-
-    /**
-     * 日志对象
-     * @var xyqWeb\log\YiiLog
-     */
-    private $logDriver = null;
-
-    /**
-     * @var null 日志名称
-     */
-    public $log = NULL;
-
-    /**
-     * Amqp interop context.
+     * Amqp interop context
      *
      * @var AmqpContext
      */
     protected $context;
+
+    /**
+     * Amqp interop context
+     *
+     * @var AmqpConnectionFactory
+     */
+    protected $connection;
+
+    /**
+     * Amqp interop context
+     *
+     * @var AmqpContext
+     */
+    protected $consumerContext;
+
+    /**
+     * Amqp interop context
+     *
+     * @var AmqpConnectionFactory
+     */
+    protected $consumerConnection;
     /**
      * List of supported amqp interop drivers.
      *
@@ -265,6 +239,14 @@ class Queue extends CliQueue
      * @var bool
      */
     protected $setupBrokerDone = false;
+    /**
+     * The property tells whether the setupBroker method was called or not.
+     * Having it we can do broker setup only once per process.
+     *
+     * @var bool
+     */
+    protected $consumerSetupBrokerDone = false;
+
 
     /**
      * @inheritdoc
@@ -273,11 +255,8 @@ class Queue extends CliQueue
     {
         parent::init();
         Event::on(BaseApp::class, BaseApp::EVENT_AFTER_REQUEST, function () {
-            $this->close();
+            $this->close('all');
         });
-        if (is_string($this->log)) {
-            $this->logDriver = \Yii::$app->get($this->log, false);
-        }
     }
 
     /**
@@ -285,35 +264,49 @@ class Queue extends CliQueue
      */
     public function listen()
     {
-        $this->initParams();
-        $this->open();
-        $this->setupBroker();
-
-        $queue = $this->context->createQueue($this->queueName);
-        $consumer = $this->context->createConsumer($queue);
-        $consumerFun = $this->context->createSubscriptionConsumer();
-        $consumerFun->subscribe($consumer, function (AmqpMessage $message, AmqpConsumer $consumer) {
-            $ttr = $message->getProperty(self::TTR);
-            $attempt = $message->getProperty(self::ATTEMPT, 1);
-            $reconsumeTime = $this->reconsumeTime;
-            $messageId = $message->getMessageId();
-            if (is_dir($this->logPath)) {
-                file_put_contents($this->logPath . '/queue_consumer_' . date('Ymd') . '.log', date('Y-m-d H:i:s') . ' messageId:' . $messageId . ' palybody:' . $message->getBody() . "\n", FILE_APPEND);
+        $listenQueue = '';
+        $exception = null;
+        while (true) {
+            if (empty($listenQueue)) {
+                $listenQueue = $this->queueName;
+            } elseif ($listenQueue !== $this->queueName) {
+                $this->queueName = $listenQueue;
+                $this->consumerSetupBrokerDone = false;
             }
-            if (is_object($this->logDriver) && method_exists($this->logDriver, 'write')) {
-                $this->logDriver->write('queue/queue_consumer.log', ' messageId:' . $message->getMessageId() . ' palybody:' . $message->getBody());
+            try {
+                $this->open('consumer');
+                $this->setupBroker('consumer');
+                $queue = $this->consumerContext->createQueue($this->queueName);
+                $consumer = $this->consumerContext->createConsumer($queue);
+                $subscriptionConsumer = $this->consumerContext->createSubscriptionConsumer();
+                $subscriptionConsumer->subscribe($consumer, function (AmqpMessage $message, AmqpConsumer $consumer) {
+                    if ($message->isRedelivered()) {
+                        $consumer->acknowledge($message);
+                        $this->redeliver($message);
+                        return true;
+                    }
+                    $ttr = $message->getProperty(self::TTR);
+                    $attempt = $message->getProperty(self::ATTEMPT, 1);
+                    $this->writeLog('queue/queue_consumer.log', ' queueName:' . $this->queueName . ',messageId:' . $message->getMessageId() . ' payload:' . $message->getBody());
+                    if ($this->handleMessage($message->getMessageId(), $message->getBody(), $ttr, $attempt)) {
+                        $consumer->acknowledge($message);
+                    } else {
+                        $consumer->acknowledge($message);
+                        $this->redeliver($message);
+                    }
+                    return true;
+                });
+                $subscriptionConsumer->consume();
+            } catch (\Exception $exception) {
+            } catch (\Throwable $exception) {
             }
-            if ($this->handleMessage($messageId, $message->getBody(), $ttr, $attempt, $reconsumeTime)) {
-                $consumer->acknowledge($message);
-            } else {
-                $consumer->acknowledge($message);
-
-                $this->redeliver($message);
+            if (!is_null($exception)) {
+                $this->logDriver->write('queue/queue_consumer.log', 'consumer process error ,restart in 1 second, error message:' . $exception->getMessage() . ',file:' . $exception->getFile() . ',line:' . $exception->getLine());
+                $exception = null;
+                $this->close('consumer');
+                sleep(1);
             }
-            return true;
-        });
-
-        $consumerFun->consume();
+        }
     }
 
     /**
@@ -322,18 +315,30 @@ class Queue extends CliQueue
     public function getContext()
     {
         $this->open();
-
         return $this->context;
     }
 
     /**
      * @inheritdoc
+     *
+     * @author xyq
+     * @param string $payload
+     * @param int $ttr
+     * @param int $delay
+     * @param mixed $priority
+     * @return string|null
+     * @throws \Interop\Queue\Exception
      */
     protected function pushMessage($payload, $ttr, $delay, $priority)
     {
+        //在同一个连接内推送不同的队列时需要重新申明当前连接内队列名
+        if (!empty($this->newQueueName) && $this->newQueueName !== $this->queueName) {
+            $this->setupBrokerDone = false;
+            $this->queueName = $this->newQueueName;
+            $this->newQueueName = '';
+        }
         $this->open();
         $this->setupBroker();
-
         $topic = $this->context->createTopic($this->exchangeName);
 
         $message = $this->context->createMessage($payload);
@@ -342,7 +347,7 @@ class Queue extends CliQueue
         $message->setTimestamp(time());
         $message->setProperty(self::ATTEMPT, 1);
         $message->setProperty(self::TTR, $ttr);
-        $message->setRoutingKey($this->routingKey);
+        $message->setRoutingKey($this->queueName . 'Key');
 
         $producer = $this->context->createProducer();
 
@@ -359,17 +364,16 @@ class Queue extends CliQueue
         $producer->send($topic, $message);
 
         $messageId = $message->getMessageId();
-        if (is_dir($this->logPath)) {
-            file_put_contents($this->logPath . '/queue_push_' . date('Ymd') . '.log', date('Y-m-d H:i:s') . ' messageId:' . $messageId . ' queueName:' . $this->queueName . ' payload:' . $payload . "\n", FILE_APPEND);
-        }
-        if (is_object($this->logDriver) && method_exists($this->logDriver, 'write')) {
-            $this->logDriver->write('queue/queue_push.log', ' messageId:' . $messageId . ' queueName:' . $this->queueName . ' payload:' . $payload);
-        }
+        $this->writeLog('queue/queue_push.log', 'queueName:' . $this->queueName . ' messageId:' . $messageId . ' payload:' . $payload);
         return $messageId;
     }
 
     /**
      * @inheritdoc
+     *
+     * @param string $id
+     * @return int|void
+     * @throws NotSupportedException
      */
     public function status($id)
     {
@@ -377,24 +381,28 @@ class Queue extends CliQueue
     }
 
     /**
-     * Opens connection and channel.
+     * Opens connection and channel
+     * @param string $type
      */
-    protected function open()
+    protected function open($type = 'push')
     {
-        if ($this->context) {
+        if (($type == 'consumer' && $this->consumerContext) || ($type == 'push' && $this->context)) {
             return;
         }
-
         switch ($this->driver) {
             case self::ENQUEUE_AMQP_LIB:
                 $connectionClass = AmqpLibConnectionFactory::class;
+
                 break;
             case self::ENQUEUE_AMQP_EXT:
                 $connectionClass = AmqpExtConnectionFactory::class;
+
                 break;
             case self::ENQUEUE_AMQP_BUNNY:
                 $connectionClass = AmqpBunnyConnectionFactory::class;
+
                 break;
+
             default:
                 throw new \LogicException(sprintf('The given driver "%s" is not supported. Drivers supported are "%s"', $this->driver, implode('", "', $this->supportedDrivers)));
         }
@@ -428,51 +436,96 @@ class Queue extends CliQueue
 
         /** @var AmqpConnectionFactory $factory */
         $factory = new $connectionClass($config);
-
-        $this->context = $factory->createContext();
-
-        if ($this->context instanceof DelayStrategyAware) {
-            $this->context->setDelayStrategy(new RabbitMqDlxDelayStrategy());
+        if ('consumer' == $type) {
+            $this->consumerConnection = $factory;
+            $this->consumerContext = $factory->createContext();
+            if ($this->consumerContext instanceof DelayStrategyAware) {
+                $this->consumerContext->setDelayStrategy(new RabbitMqDlxDelayStrategy());
+            }
+        } else {
+            $this->connection = $factory;
+            $this->context = $factory->createContext();
+            if ($this->context instanceof DelayStrategyAware) {
+                $this->context->setDelayStrategy(new RabbitMqDlxDelayStrategy());
+            }
         }
     }
 
-    protected function setupBroker()
+    /**
+     * 启动队列配置
+     *
+     * @author xyq
+     * @param string $type
+     */
+    protected function setupBroker($type = 'push')
     {
-        if ($this->setupBrokerDone) {
-            return;
-        }
-
-        $queue = $this->context->createQueue($this->queueName);
-        $queue->addFlag(AmqpQueue::FLAG_DURABLE);
         $queueArguments = ['x-max-priority' => $this->maxPriority];
         if (is_array($this->queueArguments) && !empty($this->queueArguments)) {
             $queueArguments = array_merge($queueArguments, $this->queueArguments);
         }
-        $queue->setArguments($queueArguments);
-        $this->context->declareQueue($queue);
+        $routingKey = $this->queueName . 'Key';
+        if ($type == 'consumer') {
+            if ($this->consumerSetupBrokerDone) {
+                return;
+            }
+            $queue = $this->consumerContext->createQueue($this->queueName);
+            $queue->addFlag(AmqpQueue::FLAG_DURABLE);
+            $queue->setArguments($queueArguments);
+            $this->consumerContext->declareQueue($queue);
+            $topic = $this->consumerContext->createTopic($this->exchangeName);
+            $topic->setType(AmqpTopic::TYPE_DIRECT);
+            $topic->addFlag(AmqpTopic::FLAG_DURABLE);
+            $this->consumerContext->declareTopic($topic);
+            $this->consumerContext->bind(new AmqpBind($queue, $topic, $routingKey));
+            $this->setupBrokerDone = true;
+        } else {
+            if ($this->setupBrokerDone) {
+                return;
+            }
+            $queue = $this->context->createQueue($this->queueName);
+            $queue->addFlag(AmqpQueue::FLAG_DURABLE);
+            $queue->setArguments($queueArguments);
+            $this->context->declareQueue($queue);
 
-        $topic = $this->context->createTopic($this->exchangeName);
-        $topic->setType(AmqpTopic::TYPE_DIRECT);
-        $topic->addFlag(AmqpTopic::FLAG_DURABLE);
-        $this->context->declareTopic($topic);
-
-        $this->context->bind(new AmqpBind($queue, $topic, $this->routingKey));
-
-        $this->setupBrokerDone = true;
+            $topic = $this->context->createTopic($this->exchangeName);
+            $topic->setType(AmqpTopic::TYPE_DIRECT);
+            $topic->addFlag(AmqpTopic::FLAG_DURABLE);
+            $this->context->declareTopic($topic);
+            $this->context->bind(new AmqpBind($queue, $topic, $routingKey));
+            $this->setupBrokerDone = true;
+        }
     }
 
     /**
-     * Closes connection and channel.
+     * Closes connection and channel
+     * @param string $type
      */
-    protected function close()
+    protected function close($type = 'all')
     {
-        if (!$this->context) {
-            return;
+        if ('consumer' == $type) {
+            if ($this->consumerConnection) {
+                $this->consumerConnection->close();
+            }
+            $this->consumerContext = $this->consumerConnection = null;
+            $this->consumerSetupBrokerDone = false;
+        } elseif ('push' == $type) {
+            if ($this->connection) {
+                $this->connection->close();
+            }
+            $this->context = $this->connection = null;
+            $this->setupBrokerDone = false;
+        } else {
+            if ($this->consumerConnection) {
+                $this->consumerConnection->close();
+            }
+            $this->consumerContext = $this->consumerConnection = null;
+            $this->consumerSetupBrokerDone = false;
+            if ($this->connection) {
+                $this->connection->close();
+            }
+            $this->context = $this->connection = null;
+            $this->setupBrokerDone = false;
         }
-
-        $this->context->close();
-        $this->context = null;
-        $this->setupBrokerDone = false;
     }
 
     /**
@@ -481,21 +534,34 @@ class Queue extends CliQueue
     protected function redeliver(AmqpMessage $message)
     {
         $attempt = $message->getProperty(self::ATTEMPT, 1);
-
+        ++$attempt;
+        $newQueueName = $oldQueueName = $this->queueName;
+        $delay = 0;
+        if ($attempt > $this->maxFailNumber) {
+            $newQueueName .= 'Error';
+            $this->setupBrokerDone = false;
+        } else {
+            $delay = $this->reconsumeTime;
+        }
+        $this->queueName = $newQueueName;
+        $this->open();
+        $this->setupBroker();
+        $topic = $this->context->createTopic($this->exchangeName);
         $newMessage = $this->context->createMessage($message->getBody(), $message->getProperties(), $message->getHeaders());
         $newMessage->setDeliveryMode($message->getDeliveryMode());
-        $newMessage->setProperty(self::ATTEMPT, ++$attempt);
-
-        $this->context->createProducer()->send(
-            $this->context->createQueue($this->queueName),
+        $newMessage->setProperty(self::ATTEMPT, $attempt);
+        $newMessage->setRoutingKey($this->queueName . 'Key');
+        $producer = $this->context->createProducer();
+        if ($delay) {
+            $newMessage->setProperty(self::DELAY, $delay);
+            $producer->setDeliveryDelay($delay * 1000);
+        }
+        $producer->send(
+            $topic,
             $newMessage
         );
-    }
-
-    protected function initParams()
-    {
-        $this->routingKey = $this->routingKey ?? $this->queueName . 'Key';
-        $this->errorQueueName = $this->errorQueueName ?? $this->queueName . 'Error';
-        $this->errorRoutingKey = $this->errorRoutingKey ?? $this->queueName . 'ErrorKey';
+        $this->close('push');
+        $this->queueName = $oldQueueName;
+        unset($newMessage, $producer, $message);
     }
 }

@@ -14,7 +14,7 @@ use yii\queue\ErrorEvent;
 use yii\queue\ExecEvent;
 
 /**
- * Verbose Behavior.
+ * Verbose Behavior
  *
  * @author Roman Zhuravlev <zhuravljov@gmail.com>
  */
@@ -89,14 +89,11 @@ class VerboseBehavior extends Behavior
         $this->command->stdout($this->jobTitle($event), Console::FG_GREY);
         $this->command->stdout(' - ', Console::FG_YELLOW);
         $this->command->stdout('Error', Console::BG_RED);
-        if ($this->jobStartedAt) {
-            $duration = number_format(round(microtime(true) - $this->jobStartedAt, 3), 3);
-            $this->command->stdout(" ($duration s)", Console::FG_YELLOW);
-        }
+        $duration = number_format(round(microtime(true) - $this->jobStartedAt, 3), 3);
+        $this->command->stdout(" ($duration s)", Console::FG_YELLOW);
         $this->command->stdout(PHP_EOL);
         $this->command->stdout('> ' . get_class($event->error) . ': ', Console::FG_RED);
-        $message = explode("\n", ltrim($event->error->getMessage()), 2)[0]; // First line
-        $this->command->stdout($message, Console::FG_GREY);
+        $this->command->stdout($event->error->getMessage(), Console::FG_GREY);
         $this->command->stdout(PHP_EOL);
     }
 

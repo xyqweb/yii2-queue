@@ -15,24 +15,19 @@ use yii\helpers\Inflector;
 use yii\queue\Queue as BaseQueue;
 
 /**
- * Queue with CLI.
+ * Queue with CLI
  *
  * @author Roman Zhuravlev <zhuravljov@gmail.com>
  */
 abstract class Queue extends BaseQueue implements BootstrapInterface
 {
     /**
-     * @event WorkerEvent that is triggered when the worker is started.
+     * @event WorkerEvent
      * @since 2.0.2
      */
     const EVENT_WORKER_START = 'workerStart';
     /**
-     * @event WorkerEvent that is triggered each iteration between requests to queue.
-     * @since 2.0.3
-     */
-    const EVENT_WORKER_LOOP = 'workerLoop';
-    /**
-     * @event WorkerEvent that is triggered when the worker is stopped.
+     * @event WorkerEvent
      * @since 2.0.2
      */
     const EVENT_WORKER_STOP = 'workerStop';
@@ -100,22 +95,19 @@ abstract class Queue extends BaseQueue implements BootstrapInterface
     protected function runWorker(callable $handler)
     {
         $this->_workerPid = getmypid();
-        /** @var LoopInterface $loop */
         $loop = Yii::createObject($this->loopConfig, [$this]);
 
         $event = new WorkerEvent(['loop' => $loop]);
         $this->trigger(self::EVENT_WORKER_START, $event);
-        if ($event->exitCode !== null) {
+        if ($event->handled || $event->exitCode !== null) {
             return $event->exitCode;
         }
 
         $exitCode = null;
         try {
-            call_user_func($handler, function () use ($loop, $event) {
-                $this->trigger(self::EVENT_WORKER_LOOP, $event);
-                return $event->exitCode === null && $loop->canContinue();
-            });
+            $exitCode = call_user_func($handler, $loop);
         } finally {
+            $event = new WorkerEvent(['loop' => $loop, 'exitCode' => $exitCode]);
             $this->trigger(self::EVENT_WORKER_STOP, $event);
             $this->_workerPid = null;
         }
@@ -138,13 +130,13 @@ abstract class Queue extends BaseQueue implements BootstrapInterface
     /**
      * @inheritdoc
      */
-    protected function handleMessage($id, $message, $ttr, $attempt, $reconsumeTime=60)
+    protected function handleMessage($id, $message, $ttr, $attempt)
     {
         if ($this->messageHandler) {
-            return call_user_func($this->messageHandler, $id, $message, $ttr, $attempt, $reconsumeTime);
+            return call_user_func($this->messageHandler, $id, $message, $ttr, $attempt);
         }
-        
-        return parent::handleMessage($id, $message, $ttr, $attempt, $reconsumeTime);
+
+        return parent::handleMessage($id, $message, $ttr, $attempt);
     }
 
     /**
@@ -156,9 +148,9 @@ abstract class Queue extends BaseQueue implements BootstrapInterface
      * @return bool
      * @internal for worker command only
      */
-    public function execute($id, $message, $ttr, $attempt, $workerPid, $reconsumeTime=60)
+    public function execute($id, $message, $ttr, $attempt, $workerPid)
     {
         $this->_workerPid = $workerPid;
-        return parent::handleMessage($id, $message, $ttr, $attempt, $reconsumeTime);
+        return parent::handleMessage($id, $message, $ttr, $attempt);
     }
 }
