@@ -336,16 +336,16 @@ abstract class Queue extends Component
             if (method_exists($event->job, 'setMessageId')) {
                 $event->job->setMessageId($id);
             }
-            $event->job->execute($this);
+            $result = $event->job->execute($this);
         } catch (\Exception $error) {
-            return $this->handleError($event->id, $event->job, $event->ttr, $event->attempt, $error);
+            $result = $this->handleError($event->id, $event->job, $event->ttr, $event->attempt, $error);
         } catch (\TypeError $error) {
-            return $this->handleError($event->id, $event->job, $event->ttr, $event->attempt, $error);
+            $result = $this->handleError($event->id, $event->job, $event->ttr, $event->attempt, $error);
         } catch (\Throwable $error) {
-            return $this->handleError($event->id, $event->job, $event->ttr, $event->attempt, $error);
+            $result = $this->handleError($event->id, $event->job, $event->ttr, $event->attempt, $error);
         }
         $this->trigger(self::EVENT_AFTER_EXEC, $event);
-        return true;
+        return $result;
     }
 
     /**
@@ -373,7 +373,7 @@ abstract class Queue extends Component
                 : $attempt < $this->attempts,
         ];
         $this->writeLog('queue/execute_error.log', $errorData);
-        return $errorData['retry'];
+        return !$errorData['retry'];
     }
 
     /**
