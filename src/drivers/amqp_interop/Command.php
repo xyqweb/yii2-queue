@@ -37,6 +37,7 @@ class Command extends CliCommand
      */
     public function actionListen()
     {
+        is_numeric($this->heartbeat) && property_exists($this->queue, 'heartbeat') && $this->queue->heartbeat = intval($this->heartbeat);
         $this->queue->listen();
     }
 }
