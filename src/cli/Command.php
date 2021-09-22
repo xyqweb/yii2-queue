@@ -39,7 +39,10 @@ abstract class Command extends Controller
      * @var bool isolate mode. It executes a job in a child process.
      */
     public $isolate = true;
-
+    /**
+     * @var null|int The periods of time PHP pings the broker in order to prolong the connection timeout. In seconds..
+     */
+    public $heartbeat = null;
 
     /**
      * @inheritdoc
@@ -53,7 +56,7 @@ abstract class Command extends Controller
         if ($this->canIsolate($actionID)) {
             $options[] = 'isolate';
         }
-
+        $options[] = 'heartbeat';
         return $options;
     }
 
