@@ -296,15 +296,16 @@ class Queue extends CliQueue
                     }
                     return true;
                 });
-                $subscriptionConsumer->consume();
+                $subscriptionConsumer->consume(300000);
             } catch (\Exception $exception) {
             } catch (\Throwable $exception) {
+            } finally {
+                $this->close('consumer');
+                sleep(1);
             }
             if (!is_null($exception)) {
                 $this->logDriver->write('queue/queue_consumer.log', 'consumer process error ,restart in 1 second, error message:' . $exception->getMessage() . ',file:' . $exception->getFile() . ',line:' . $exception->getLine());
                 $exception = null;
-                $this->close('consumer');
-                sleep(1);
             }
         }
     }
@@ -561,6 +562,7 @@ class Queue extends CliQueue
             $newMessage
         );
         $this->close('push');
+        $this->writeLog('queue/redeliver_push.log', 'queueName:' . $this->queueName . ' messageId:' . $newMessage->getMessageId() . ' payload:' . $message->getBody());
         $this->queueName = $oldQueueName;
         unset($newMessage, $producer, $message);
     }

@@ -369,7 +369,7 @@ abstract class Queue extends Component
             'error_line'  => $error->getLine(),
             'error_trace' => $error->getTraceAsString(),
             'retry'       => $job instanceof RetryableJobInterface
-                ? $job->canRetry($attempt, $error)
+                ? true
                 : $attempt < $this->attempts,
         ];
         $this->writeLog('queue/execute_error.log', $errorData);
