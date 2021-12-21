@@ -561,6 +561,7 @@ class Queue extends CliQueue
             $newMessage
         );
         $this->close('push');
+        $this->writeLog('queue/redeliver_push.log', 'queueName:' . $this->queueName . ' messageId:' . $newMessage->getMessageId() . ' payload:' . $message->getBody());
         $this->queueName = $oldQueueName;
         unset($newMessage, $producer, $message);
     }
