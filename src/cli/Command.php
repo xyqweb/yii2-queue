@@ -139,10 +139,15 @@ abstract class Command extends Controller
      * golang push a job file
      *
      * @author xyq
+     * @param $queue
      * @param $filename
      */
-    public function actionExecFile($filename)
+    public function actionExecFile($queue, $filename)
     {
+        if (empty($queue) || !ctype_alnum($queue)) {
+            echo 'Error：queue name not exist';
+            return ExitCode::UNSPECIFIED_ERROR;
+        }
         $filename = base64_decode($filename);
         if (!is_string($filename) || !file_exists($filename)) {
             echo 'Error：file is not exist';
