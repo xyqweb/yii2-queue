@@ -83,7 +83,7 @@ abstract class Command extends Controller
      */
     protected function canVerbose($actionID)
     {
-        return $actionID === 'exec' || $this->isWorkerAction($actionID);
+        return $actionID === 'exec' || $actionID === 'exec-file' || $actionID === 'timeout' || $this->isWorkerAction($actionID);
     }
 
     /**
@@ -133,6 +133,70 @@ abstract class Command extends Controller
         }
 
         return ExitCode::UNSPECIFIED_ERROR;
+    }
+
+    /**
+     * golang push a job file
+     *
+     * @author xyq
+     * @param $filename
+     */
+    public function actionExecFile($filename)
+    {
+        $filename = base64_decode($filename);
+        if (!is_string($filename) || !file_exists($filename)) {
+            echo 'Error：file is not exist';
+            return ExitCode::UNSPECIFIED_ERROR;
+        }
+        $jobData = $this->formatFile($filename);
+        if(is_string($jobData)){
+            echo $jobData;
+            return ExitCode::UNSPECIFIED_ERROR;
+        }
+        if ($this->queue->execute($jobData['messageId'], $jobData['body'], $jobData['ttr'], $jobData['attempt'], $jobData['pid'])) {
+            return ExitCode::OK;
+        }
+        $this->queue->redeliverJob($jobData);
+        return ExitCode::UNSPECIFIED_ERROR;
+    }
+
+    /**
+     * golang push a job file
+     *
+     * @author xyq
+     * @param $filename
+     */
+    public function actionTimeout($filename)
+    {
+        $filename = base64_decode($filename);
+        if (!is_string($filename) || !file_exists($filename)) {
+            echo 'Error：file is not exist';
+            return ExitCode::UNSPECIFIED_ERROR;
+        }
+        $jobData = $this->formatFile($filename);
+        if(is_string($jobData)){
+            echo $jobData;
+            return ExitCode::UNSPECIFIED_ERROR;
+        }
+        $this->queue->redeliverJob($jobData);
+        return ExitCode::UNSPECIFIED_ERROR;
+    }
+
+    /**
+     * 处理文件内容
+     *
+     * @author xyq
+     * @param $filename
+     * @return false|mixed|string
+     */
+    protected function formatFile($filename)
+    {
+        $data = file_get_contents($filename);
+        $data = json_decode($data, true);
+        if (!is_array($data) || empty($data)) {
+            return 'queue data is not array';
+        }
+        return $data;
     }
 
     /**
