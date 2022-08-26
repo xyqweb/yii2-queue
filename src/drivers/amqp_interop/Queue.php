@@ -566,4 +566,42 @@ class Queue extends CliQueue
         $this->queueName = $oldQueueName;
         unset($newMessage, $producer, $message);
     }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function redeliverJob(array $job)
+    {
+        $job['attempt']++;
+        $delay = 0;
+        if ($job['attempt'] > $this->maxFailNumber) {
+            $job['queueName'] .= 'Error';
+        } else {
+            $delay = $this->reconsumeTime;
+        }
+        $this->queueName = $job['queueName'];
+        $this->open();
+        $this->setupBroker();
+        $topic = $this->context->createTopic($this->exchangeName);
+        $newMessage = $this->context->createMessage($job['body']);
+        $topic->setArguments($job['header']);
+        $newMessage->setMessageId($job['messageId']);
+        $newMessage->setTimestamp(strtotime($job['timestamp']));
+        $newMessage->setProperty(self::ATTEMPT, $job['attempt']);
+        $newMessage->setProperty(self::TTR, $job['ttr']);
+        $newMessage->setDeliveryMode(AmqpMessage::DELIVERY_MODE_PERSISTENT);
+        $newMessage->setRoutingKey($this->queueName . 'Key');
+        $producer = $this->context->createProducer();
+        if ($delay) {
+            $newMessage->setProperty(self::DELAY, $delay);
+            $producer->setDeliveryDelay($delay * 1000);
+        }
+        $producer->send(
+            $topic,
+            $newMessage
+        );
+        $this->close('push');
+        $this->writeLog('queue/redeliver_push.log', 'queueName:' . $this->queueName . ' messageId:' . $newMessage->getMessageId() . ' payload:' . $job['body']);
+        unset($newMessage, $producer, $message);
+    }
 }

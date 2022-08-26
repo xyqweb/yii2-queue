@@ -337,10 +337,6 @@ abstract class Queue extends Component
                 $event->job->setMessageId($id);
             }
             $result = $event->job->execute($this);
-        } catch (\Exception $error) {
-            $result = $this->handleError($event->id, $event->job, $event->ttr, $event->attempt, $error);
-        } catch (\TypeError $error) {
-            $result = $this->handleError($event->id, $event->job, $event->ttr, $event->attempt, $error);
         } catch (\Throwable $error) {
             $result = $this->handleError($event->id, $event->job, $event->ttr, $event->attempt, $error);
         }
