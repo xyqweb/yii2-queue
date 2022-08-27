@@ -141,23 +141,22 @@ abstract class Command extends Controller
      * @author xyq
      * @param $queue
      * @param $filename
+     * @return int exit code
      */
     public function actionExecFile($queue, $filename)
     {
         if (empty($queue) || !ctype_alnum($queue)) {
             echo 'Error：queue name not exist';
+            $this->queue->writeLog('queue/queue_consumer.log', ['queue' => $queue, 'filename' => $filename]);
             return ExitCode::NOINPUT;
-        }
-        $filename = base64_decode($filename);
-        if (!is_string($filename) || !file_exists($filename)) {
-            echo 'Error：file is not exist';
-            return ExitCode::UNAVAILABLE;
         }
         $jobData = $this->formatFile($filename);
         if(is_string($jobData)){
             echo $jobData;
+            $this->queue->writeLog('queue/queue_consumer.log', ['queue' => $queue, 'filename' => $filename]);
             return ExitCode::DATAERR;
         }
+        $this->queue->writeLog('queue/queue_consumer.log', $jobData);
         if ($this->queue->execute($jobData['messageId'], $jobData['body'], $jobData['ttr'], $jobData['attempt'], $jobData['pid'])) {
             return ExitCode::OK;
         }
@@ -170,17 +169,14 @@ abstract class Command extends Controller
      *
      * @author xyq
      * @param $filename
+     * @return int exit code
      */
     public function actionTimeout($filename)
     {
-        $filename = base64_decode($filename);
-        if (!is_string($filename) || !file_exists($filename)) {
-            echo 'Error：file is not exist';
-            return ExitCode::UNAVAILABLE;
-        }
         $jobData = $this->formatFile($filename);
-        if(is_string($jobData)){
+        if (is_string($jobData)) {
             echo $jobData;
+            $this->queue->writeLog('queue/exec_timeout.log', ['data' => $jobData, 'filename' => $filename]);
             return ExitCode::DATAERR;
         }
         $this->queue->redeliverJob($jobData);
@@ -188,15 +184,22 @@ abstract class Command extends Controller
     }
 
     /**
-     * 处理文件内容
+     * 加密文件并格式化内容
      *
      * @author xyq
      * @param $filename
-     * @return false|mixed|string
+     * @return array|string
      */
     protected function formatFile($filename)
     {
+        $filename = base64_decode($filename);
+        if (!is_string($filename) || !file_exists($filename)) {
+            return 'Error：file is not exist';
+        }
         $data = file_get_contents($filename);
+        if (empty($data)) {
+            return 'Error：file is empty';
+        }
         $data = json_decode($data, true);
         if (!is_array($data) || empty($data)) {
             return 'queue data is not array';
