@@ -379,7 +379,7 @@ abstract class Queue extends Component
      * @param string $fileName
      * @param $content
      */
-    protected function writeLog(string $fileName, $content)
+    public function writeLog(string $fileName, $content)
     {
         if (method_exists($this->logDriver, 'write')) {
             $this->logDriver->write($fileName, $content);
