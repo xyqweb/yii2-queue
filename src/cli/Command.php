@@ -146,23 +146,23 @@ abstract class Command extends Controller
     {
         if (empty($queue) || !ctype_alnum($queue)) {
             echo 'Error：queue name not exist';
-            return ExitCode::UNSPECIFIED_ERROR;
+            return ExitCode::NOINPUT;
         }
         $filename = base64_decode($filename);
         if (!is_string($filename) || !file_exists($filename)) {
             echo 'Error：file is not exist';
-            return ExitCode::UNSPECIFIED_ERROR;
+            return ExitCode::UNAVAILABLE;
         }
         $jobData = $this->formatFile($filename);
         if(is_string($jobData)){
             echo $jobData;
-            return ExitCode::UNSPECIFIED_ERROR;
+            return ExitCode::DATAERR;
         }
         if ($this->queue->execute($jobData['messageId'], $jobData['body'], $jobData['ttr'], $jobData['attempt'], $jobData['pid'])) {
             return ExitCode::OK;
         }
         $this->queue->redeliverJob($jobData);
-        return ExitCode::UNSPECIFIED_ERROR;
+        return ExitCode::OK;
     }
 
     /**
@@ -176,15 +176,15 @@ abstract class Command extends Controller
         $filename = base64_decode($filename);
         if (!is_string($filename) || !file_exists($filename)) {
             echo 'Error：file is not exist';
-            return ExitCode::UNSPECIFIED_ERROR;
+            return ExitCode::UNAVAILABLE;
         }
         $jobData = $this->formatFile($filename);
         if(is_string($jobData)){
             echo $jobData;
-            return ExitCode::UNSPECIFIED_ERROR;
+            return ExitCode::DATAERR;
         }
         $this->queue->redeliverJob($jobData);
-        return ExitCode::UNSPECIFIED_ERROR;
+        return ExitCode::OK;
     }
 
     /**
