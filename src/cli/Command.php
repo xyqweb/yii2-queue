@@ -156,7 +156,7 @@ abstract class Command extends Controller
             $this->queue->writeLog('queue/queue_consumer.log', ['queue' => $queue, 'filename' => $filename]);
             return ExitCode::DATAERR;
         }
-        $this->queue->writeLog('queue/queue_consumer.log', $jobData);
+        $this->queue->writeLog('queue/queue_consumer.log', 'queueName:' . $queue . ',messageId:' . $jobData['messageId'] . ',attempt:' . $jobData['attempt'] . ',payload:' . $jobData['body']);
         if ($this->queue->execute($jobData['messageId'], $jobData['body'], $jobData['ttr'], $jobData['attempt'], $jobData['pid'])) {
             return ExitCode::OK;
         }
